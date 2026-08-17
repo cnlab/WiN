@@ -1,0 +1,416 @@
+---
+title: "WiN: data cleaning pre"
+author: "Dani Cosme & Taurean Butler"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen=999)
+```
+
+# load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, knitr, DT, devtools, install = TRUE)
+
+if (!require(scorequaltrics)) {
+  devtools::install_github('dcosme/qualtrics', ref = "dev/enhance")
+}
+```
+
+# define variables and paths
+
+To pull data from Qualtrics, you need a credentials file with an API token associated with your account. To create the file, follow these steps.
+
+1. Generate an API token for Qualtrics. Follow the steps outlined [here](https://www.qualtrics.com/support/integrations/api-integration/overview/).
+
+2. Save a Qualtrics credentials text file with the following format. In this example, the file is being saved as `~/credentials.yaml.PENN`. The `baseurl` is the URL for your institution on Qualtrics. Use `upenn.co1.qualtrics.com` for Penn Qualtrics.
+
+```
+token: oILNW6...[your qualtrics API token]
+baseurl: upenn.co1.qualtrics.com
+```
+
+`cred_file_location` = path to your Qualtrics credential file. 
+
+`survey_name_filter` = regular expression to filter the available surveys
+
+```{r}
+survey_name_filter = "WiN Baseline - FINAL"
+keep_columns = '(ResponseId|Finished|Progress|PROLIFIC_PID|condition|activeweek|StartDate|attention_1|attention_2|Q_RecaptchaScore|consent)'
+cred_file_location = "~/qualtrics_credentials.yaml"
+ignore_items = "IPAddress|RecipientFirstName|RecipientLastName|RecipientEmail|ExternalReference|LocationLatitude|LocationLongitude"
+```
+
+# fetch qualtrics data
+The Qualtrics API is pretty finicky. If you get the following error, just rerun the `get_survey_data` command until it works:
+
+```
+Error in qualtrics_response_codes(f, raw = TRUE) : 
+  Qualtrics API complains that the requested resource cannot be found (404 error).
+Please check if you are using the correct survey ID.
+```
+```{r}
+# load data file if it exists, or pull fresh from qualtrics using the API
+if (!file.exists("../../Data/Raw/pre_raw.RDS")) {
+  # load credential file
+  credentials = scorequaltrics::creds_from_file(cred_file_location)
+  
+  # filter
+  surveysAvail = scorequaltrics::get_surveys()
+  surveysFiltered = filter(surveysAvail, grepl(survey_name_filter, name))
+  knitr::kable(arrange(select(surveysFiltered, name), name))
+  
+  # fetch data
+  surveys_long = scorequaltrics::get_survey_data(surveysFiltered,
+                                                 credentials, 
+                                                 pid_col = keep_columns) %>%
+                 filter(!grepl(ignore_items, item)) %>% #filter out identifiable data
+    select(survey_name, attention_1, attention_2, Q_RecaptchaScore, condition, activeweek, StartDate, ResponseId, PROLIFIC_PID, consent_1, consent_2, Finished, Progress, item, value)
+
+  saveRDS(surveys_long, "../../Data/Raw/pre_raw.RDS")
+} else {
+  surveys_long = readRDS("../../Data/Raw/pre_raw.RDS")
+}
+
+```
+
+# load and tidy prolific data
+```{r}
+read_function = function(file) {
+  read.csv(file, colClasses = "character")
+}
+
+prolific_all = fs::dir_ls("../../Data/Raw/", regexp = "WiN_Baseline_Prolific.*.csv", recurse = TRUE) %>%
+  map_dfr(read_function)
+
+prolific_sex = prolific_all %>%
+  select(Participant.id, Sex) %>%
+  rename("value" = Sex,
+         "PROLIFIC_PID" = Participant.id) %>%
+  mutate(scale_name = "sex",
+         item = "sex")
+```
+
+# load and tidy missing AUDIT data
+```{r}
+audit = fs::dir_ls("../../Data/Raw", regexp = "WiN_Baseline_Cohort4.csv", recurse = TRUE) %>%
+  map_dfr(read_function) %>%
+  # select(attention_1, attention_2, Q_RecaptchaScore, condition, activeweek, StartDate, ResponseId, PROLIFIC_PID, consent_1, consent_2, Finished, Progress, AUDIT_1) %>%
+  select(ResponseId, PROLIFIC_PID, AUDIT_1) %>%
+  filter(!grepl("How|ImportId", AUDIT_1)) %>%
+  mutate(value = case_when(AUDIT_1 == "Never" ~ "0",
+                           AUDIT_1 == "Monthly or less" ~ "1",
+                           AUDIT_1 == "2 to 4 times a month" ~ "2",
+                           AUDIT_1 == "2 to 3 times a week" ~ "3",
+                           AUDIT_1 == "4 or more times a week" ~ "4"),
+         item = "AUDIT_1") %>%
+  select(-AUDIT_1)
+
+audit_missing = surveys_long %>%
+  filter(ResponseId %in% audit$ResponseId & item == "AUDIT_1") %>%
+  select(-value) %>%
+  left_join(., audit)
+```
+
+# tidy qualtrics data
+```{r}
+# load state codes
+state_codes = read.csv("state_codes.csv", stringsAsFactors = FALSE) %>%
+  mutate(state_code = as.character(state_code)) %>%
+  rename("value" = state_code)
+
+states = surveys_long %>%
+  filter(grepl("state", item)) %>% 
+  left_join(., state_codes, by = "value") %>%
+  select(-value) %>%
+  rename("value" = state)
+
+# filter out non-participant responses and recode IDs
+surveys_included = surveys_long %>%
+  filter(!(ResponseId %in% audit$ResponseId & item == "AUDIT_1")) %>% # replace missing AUDIT_1 values after moving to screening
+  bind_rows(., audit_missing) %>%
+  filter(!grepl("state", item)) %>% # replace state numbers with names
+  bind_rows(., states) %>%
+  filter(!is.na(PROLIFIC_PID)) %>% #remove test responses
+  filter(!grepl("5efe5bdf6b4d873597a3c3e6", PROLIFIC_PID)) %>% #remove test responses
+  filter(nchar(PROLIFIC_PID) == 24) %>% # remove invalid IDs from test responses
+  filter(Progress == 100) %>% # remove incomplete responses; update if we include people who completed less than 100%
+  filter(!grepl("_DO_", item)) %>% # remove order items
+  filter(!grepl("Q_Recaptcha|Q_Duplicate|^Status$|DistributionChannel|EndDate|RecordedDate|UserLanguage|Last Seen", item)) %>% #remove qualtrics variables we wont' use
+  select(-Finished, -Progress, -consent_1, -consent_2, -attention_1, -attention_2, -Q_RecaptchaScore)
+
+# tidy scales with multiple items
+surveys_subitems = surveys_included %>% 
+  filter(grepl("_[0-9]+$", item)) %>%
+  mutate(# slider numbers
+         item = ifelse(grepl("readiness_change_1", item), gsub("_1", "", item), item)) %>%
+  extract(item, c("scale_name", "number"), "(.*)_([0-9]{1,2}$)", remove = FALSE) %>% # separate scale names and item numbers
+  mutate(scale_name = ifelse(is.na(scale_name), item, scale_name),
+         item = ifelse(!is.na(number), number, item)) %>%
+  select(-number)
+
+# timers
+surveys_timer = surveys_included %>%
+  filter(grepl("timing_", item)) %>%
+  filter(!grepl("_timing_", item)) %>%
+  extract(item, c("item"), "timing_(.*)", remove = FALSE) %>%
+  mutate(scale_name = "timing")
+
+# tidy remaining items and merge
+surveys_tidy_nosex = surveys_included %>% 
+  filter(!grepl("_[0-9]+$", item)) %>%
+  filter(!grepl("_timing_|^timing_", item)) %>%
+  extract(item, c("scale_name", "sub_item"), "(SNI_children|SNI_caretakers|SNI_inlaws|SNI_relatives|SNI_friends|SNI_religious|SNI_students|SNI_work|SNI_volunteer|military_date|gen_persp|gen_mind|alc_persp|alc_mind|dd_quiz)_(.*)", remove = FALSE) %>%
+  mutate(item = gsub("end_", "", item),
+         scale_name = ifelse(is.na(scale_name), item, scale_name),
+         item = ifelse(!is.na(sub_item), sub_item, item),
+         item = gsub(".*_TEXT", "other", item), # recode open response items
+         scale_name = gsub("_TEXT", "", scale_name)) %>% # recode open response items
+  select(-sub_item) %>%
+  bind_rows(., surveys_subitems) %>%
+  bind_rows(., surveys_timer) %>%
+  mutate(value = ifelse(value == "", NA, value))
+
+# add prolific sex item and merge with tidied dataframe
+sex = surveys_tidy_nosex %>% 
+  select(-item, -scale_name, -value) %>%
+  unique() %>%
+  left_join(., prolific_sex)
+
+surveys_tidy = surveys_tidy_nosex %>%
+  bind_rows(sex) %>%
+  arrange(PROLIFIC_PID)
+```
+
+# exclusions
+Exclude and do not pay participants who: 
+
+1) did not pass the screener (age < 18 or not veterans), or
+
+2) did not consent to the baseline survey, or
+
+3) did not pass the two attention checks, or
+
+4) have a Q_RecaptchaScore score < 0.5 and were identified as likely bots by Prolific, or
+
+5) spent more than 15 mins off-task. 
+
+```{r}
+# prep data to use exclusion code in 
+# Open the Prolific .csv file including the demographic information of the participants and add the variable representing the bot check to the main baseline file. 
+prolific_exclusions <- prolific_all %>%
+  select(Participant.id, Authenticity.check..Bots) %>%
+  rename(PROLIFIC_PID = Participant.id,
+         prolific_check_bot = Authenticity.check..Bots) 
+
+exclusion_data = surveys_long %>%
+  filter(grepl("PROLIFIC_PID|^age$|veteran_YN|worktimeArray|Duration|AUDIT_1$", item)) %>%
+  select(PROLIFIC_PID, ResponseId, StartDate, consent_1, contains("attention"), Q_RecaptchaScore, item, value) %>%
+  spread(item, value) %>%
+  
+  # Merge with the baseline survey
+  left_join(., prolific_exclusions) %>%
+  
+  # Calculate how much time participants spent off-task.
+  mutate(time_list = strsplit(as.character(worktimeArray), ","),
+         time_numeric = lapply(time_list, function(x) as.numeric(gsub("[^0-9.-]", "", x))),
+         off_task_sec = sapply(time_numeric, function(x) sum(abs(x[x < 0]), na.rm = TRUE)),
+         off_task_min = round(off_task_sec / 60, 2),
+         q_duration = round(as.numeric(`Duration (in seconds)`)/60,2),
+         alcohol_cohort = ifelse(StartDate > ymd_hms("2026-07-31 00:00:00"), "yes", "no"))
+
+# First create a list of all participants who should 
+# already be filtered out in Prolific
+# because they did not pass the screener
+exclude_screener <- exclusion_data %>% 
+  filter(age < 18 | veteran_YN == "0" | (alcohol_cohort == "yes" & AUDIT_1 < 2))  %>% 
+  select(PROLIFIC_PID, age, veteran_YN, alcohol_cohort, AUDIT_1) 
+  
+# Next, create a list of all participants who did not meet 
+# the other exclusion criteria and who will have to be excluded manually
+exclusions <- exclusion_data %>%
+  filter(!grepl("5efe5bdf6b4d873597a3c3e6", PROLIFIC_PID)) %>% #remove test responses
+  filter(!(PROLIFIC_PID %in% exclude_screener$PROLIFIC_PID)) %>%
+  mutate(Q_RecaptchaScore = as.numeric(as.character(Q_RecaptchaScore)),
+         consent = ifelse(consent_1 == "1", "pass", "fail"),
+         attention_1 = ifelse(attention_1 == "4", "pass", "fail"),
+         attention_2 = ifelse(attention_2 == "1", "pass", "fail"),
+         qualtrics_check_bot = ifelse(Q_RecaptchaScore < 0.5, "pass", "fail"), 
+         prolific_check_bot = ifelse(!(prolific_check_bot == "low"), "pass", "fail"), 
+         off_task_time = ifelse(off_task_min <= 15, "pass", "fail"),
+         consent = ifelse(consent == "fail", "fail", "pass"),
+         attention = ifelse(attention_1 == "fail" & attention_2 == "fail", "fail", "pass"),
+         bot_checks = ifelse(qualtrics_check_bot == "fail" & prolific_check_bot == "fail", "fail", "pass"),) %>%
+  filter(consent == "fail" | attention == "fail" |
+           bot_checks == "fail" | off_task_time == "fail")  %>% 
+  select(PROLIFIC_PID, consent, attention, bot_checks, off_task_time) %>%
+  gather(reason, value, -PROLIFIC_PID) %>%
+  filter(value == "fail") %>%
+  group_by(PROLIFIC_PID) %>%
+  mutate(n = n(),
+         reason = ifelse(n > 1, "more than one", reason)) %>%
+  unique()
+
+exclusions %>%
+  group_by(reason) %>%
+  summarize(n = n())
+```
+
+# tidy final dataset 
+Check for duplicate IDs, exclude participants, and create key
+
+Duplicate filtering process: select second survey if significantly later in the day or includes more/missing information, otherwise select first survey
+
+```{r}
+# check for duplicates and fix as needed
+sid_duplicates = surveys_included %>%
+  spread(item, value) %>%
+  select(survey_name, ResponseId, StartDate, PROLIFIC_PID) %>%
+  unique() %>%
+  group_by(PROLIFIC_PID) %>%
+  dplyr::mutate(n = n()) %>%
+  filter(n > 1) %>%
+  arrange(PROLIFIC_PID, StartDate)
+
+# select the duplicate response id to filter out
+duplicate_ids = sid_duplicates %>%
+  dplyr::mutate(second_survey = ifelse(!row_number() == 1, "yes", "no")) %>%
+  filter((grepl("5be9ce784f251d00015ce92e|6a04921727bbb57341ef260c|69b923b2250cdb701fbd7fe3", PROLIFIC_PID) & second_survey == "no") | 
+         (grepl("6a0a330931b91d58443ea2bd", PROLIFIC_PID) & second_survey == "yes"))
+
+# check and fix conditions
+conditions = surveys_tidy %>%
+  filter(!ResponseId %in% duplicate_ids$ResponseId) %>% # remove second of duplicate responses
+  filter(!(PROLIFIC_PID %in% exclude_screener$PROLIFIC_PID)) %>% # remove people who failed the screening
+  filter(!(PROLIFIC_PID %in% exclusions$PROLIFIC_PID)) %>% # remove people who were excluded 
+  select(PROLIFIC_PID, condition) %>%
+  unique()
+
+# check for missing conditions
+missing_condition = conditions %>%
+  filter(is.na(condition))
+  
+# create new SIDs
+sids = surveys_included %>%
+  filter(!ResponseId %in% duplicate_ids$ResponseId) %>% # remove second of duplicate responses
+  filter(!(PROLIFIC_PID %in% exclude_screener$PROLIFIC_PID)) %>% # remove people who failed the screening
+  filter(!(PROLIFIC_PID %in% exclusions$PROLIFIC_PID)) %>% # remove people who were excluded 
+  select(PROLIFIC_PID) %>%
+  unique() %>%
+  ungroup() %>%
+  dplyr::mutate(SID = sprintf("WIN-%04d", row_number()))
+
+# merge
+surveys_final = surveys_tidy %>%
+  select(-condition) %>%
+  left_join(., conditions) %>%
+  filter(!ResponseId %in% duplicate_ids$ResponseId) %>% # remove second of duplicate responses
+  filter(!(PROLIFIC_PID %in% exclude_screener$PROLIFIC_PID)) %>% # remove people who failed the screening
+  filter(!(PROLIFIC_PID %in% exclusions$PROLIFIC_PID)) %>% # remove people who were excluded 
+  left_join(., sids) %>%
+  arrange(SID, scale_name, item) %>%
+  mutate(day = 0) %>% # add day variable
+  select(survey_name, StartDate, condition, day, SID, scale_name, item, value)
+
+# create ID key
+key = sids %>%
+  left_join(., conditions) %>%
+  select(PROLIFIC_PID, SID, condition) %>%
+  unique()
+```
+
+# summarize survey ns {.tabset}
+## number of scale response
+```{r}
+surveys_final %>%
+  filter(!is.na(value)) %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time", scale_name)) %>%
+  group_by(scale_name) %>%
+  select(SID, scale_name) %>%
+  unique() %>%
+  dplyr::summarize(n = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+## number of scale responses per person
+```{r}
+surveys_final %>%
+  filter(!is.na(value)) %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time", scale_name)) %>%
+  group_by(SID, scale_name) %>%
+  summarize(n_responses = n()) %>%
+  group_by(scale_name, n_responses) %>%
+  summarize(n_people = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+## number of missing responses
+```{r}
+surveys_final %>%
+  filter(is.na(value)) %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time|pageNo", scale_name)) %>%
+  group_by(SID, scale_name, item) %>%
+  group_by(scale_name, item) %>%
+  summarize(n_people_missing = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+## number of participants {.tabset}
+### all 
+```{r}
+surveys_final %>%
+  select(SID) %>%
+  unique() %>%
+  dplyr::summarize(n = n())
+```
+
+### by condition 
+```{r}
+surveys_final %>%
+  select(SID, condition) %>%
+  unique() %>%
+  group_by(condition) %>%
+  dplyr::summarize(n = n())
+```
+
+# check scale ranges
+```{r}
+surveys_final %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time|zipcode|military_date", scale_name)) %>%
+  mutate(value = as.numeric(value)) %>% # all non-numeric values will be NA
+  filter(!is.na(value)) %>%
+  group_by(scale_name) %>%
+  summarize(min = round(min(value), 2),
+            max = round(max(value), 2),
+            mean = round(mean(value), 2),
+            var = round(var(value), 2)) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+# write csvs
+```{r}
+write.csv(key, "../../Data/cleaned/pre_key.csv", row.names = FALSE)
+write.csv(exclusions, "../../Data/cleaned/pre_exclusions.csv", row.names = FALSE)
+write.csv(filter(surveys_final, !grepl("^gender$|sex|race|hispanic_latinx|^ses_|income_household|^age$|state|zip", scale_name)),
+          "../../Data/cleaned/pre_clean_long.csv", row.names = FALSE)
+write.csv(surveys_final %>% filter(grepl("^gender$|sex|race|hispanic_latinx|^ses_|income_household|^age$|state|zip", scale_name)) %>% select(-day),
+          "../../Data/cleaned/pre_clean_long_demo.csv", row.names = FALSE)
+```

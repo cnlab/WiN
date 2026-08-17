@@ -1,0 +1,526 @@
+---
+title: "WiN Prep "
+author: "Dani Cosme & Taurean Butler"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen=999)
+```
+
+# load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, devtools, DescTools)
+
+if (!require(scorequaltrics)) {
+  devtools::install_github('dcosme/qualtrics', ref = "dev/enhance")
+}
+```
+
+# load and tidy data {.tabset}
+## load
+```{r}
+# non-demographic data
+data_clean = read.csv("../../Data/Cleaned/pre_clean_long.csv", stringsAsFactors = FALSE) %>%
+  bind_rows(read.csv("../../Data/Cleaned/daily_clean_long.csv", stringsAsFactors = FALSE)) %>%
+  bind_rows(read.csv("../../Data/Cleaned/post_clean_long.csv", stringsAsFactors = FALSE)) %>%
+  filter(!grepl("timing|timer", scale_name)) %>%
+  rename("date" = StartDate) %>%
+  select(survey_name, day, date, condition, SID, everything())
+
+# demographic data
+demo_clean = read.csv("../../Data/Cleaned/pre_clean_long_demo.csv", stringsAsFactors = FALSE)
+
+# identity codes
+identities = data.frame(item = as.character(1:12), item_text = c("military", "mental_health",  "disability", "ses", "race_ethnicity", "gender_sex", "sexuality", "age", "job_role", "education", "politics", "other"))
+```
+
+## daily items {.tabset}
+### emotions
+```{r}
+emotions = data_clean %>% 
+  filter(scale_name == "emotion") %>%
+  mutate(item = dplyr::recode(item, "1" = "happy", 
+                              "2" = "sad",
+                              "3" = "angry", 
+                              "4" = "anxious",
+                              "5" = "stressed", 
+                              "6" = "lonely",
+                              "7" = "excited", 
+                              "8" = "calm")) %>%
+  arrange(SID, day)
+```
+
+### alcohol
+Includes responses in the post survey
+
+```{r}
+alcohol_motivation = data_clean %>%
+  filter(grepl("alcohol_motivation", scale_name)) %>%
+  mutate(
+    item = dplyr::recode(item,
+                         "1" = "forget_worries",
+                         "2" = "cheer_up",
+                         "3" = "excitement",
+                         "4" = "fun", 
+                         "5" = "celebration",
+                         "6" = "social",
+                         "7" = "fit_in",
+                         "alcohol_motivation_TEXT" = "other")) # fix as needed
+
+alcohol = data_clean %>%
+  filter(grepl("^alcohol_", scale_name)) %>%
+  filter(!grepl("alcohol_motivation", scale_name)) %>%
+  mutate(scale_name = "alcohol",
+         item = gsub("alcohol_", "", item)) %>%
+  bind_rows(alcohol_motivation) %>%
+  arrange(SID, day)
+```
+
+### intervention-related items
+```{r}
+IIs = data_clean %>% 
+  filter(grepl("II_", scale_name)) %>%
+  filter(!condition == "control") %>%
+  mutate(match = ifelse(scale_name == sprintf("II_%s", condition), "yes", "no"),
+         item = dplyr::recode(item, "1" = "if", "2" = "then")) %>%
+  filter(match == "yes") %>%
+  select(-match)
+  
+study_peer = data_clean %>% 
+  filter(!day == 0) %>%
+  filter(scale_name == "strategy_use" | (scale_name == "study_peer" & grepl("perspective", condition))) 
+
+daily_intervention = data_clean %>%
+  filter(grepl("strategy_use", scale_name)) %>%
+  bind_rows(., IIs)%>%
+  bind_rows(., study_peer) %>%
+  arrange(SID, day)
+```
+
+### interaction
+```{r}
+identity = data_clean %>%
+  filter(grepl("int_identity_type|similarity_type", scale_name)) %>%
+  left_join(., identities) %>%
+  mutate(item_text = case_when((scale_name == "int_identity_type" & item == 14) | (grepl("similarity_type", scale_name) & item == 13) ~ "no interactions", .default = item_text),
+         item = ifelse(!is.na(item_text), item_text, item),
+         scale_name = gsub("int_", "interaction_", scale_name)) %>%
+  select(-item_text)
+
+partner = data_clean %>%
+  filter(scale_name == "int_partner") %>%
+  mutate(item = dplyr::recode(
+    item,
+    "1" = "family",
+    "2" = "romantic",
+    "3" = "friend",
+    "4" = "work_colleague",
+    "5" = "work_supervisor",
+    "6" = "work_supervisee",
+    "7" = "work_client",
+    "8" = "work_mentorship",
+    "9" = "acquaint",
+    "10" = "stranger",
+    "11" = "other",
+    "other" = "other_text",
+    "12" = "no interactions"),
+  scale_name = gsub("int_", "interaction_", scale_name)
+  )
+
+outcome = data_clean %>%
+  filter(scale_name == "int_outcome") %>%
+  mutate(item = dplyr::recode(
+    item,
+    "1" = "felt_seen",
+    "2" = "shared_understanding",
+    "3" = "understood_other",
+    "4" = "constructive_discussion",
+    "5" = "felt_better"),
+    scale_name = gsub("int_", "interaction_", scale_name)
+    )
+
+response = data_clean %>%
+  filter(scale_name == "int_response") %>%
+  mutate(item = dplyr::recode(
+    item,
+    "1" = "disclosure",
+    "2" = "suppression",
+    "3" = "reappraisal",
+    "4" = "perspective_taking",
+    "5" = "acceptance",
+    "6" = "rumination",
+    "7" = "self_monitoring"),
+    scale_name = gsub("int_", "interaction_", scale_name)
+    )
+
+interaction = data_clean %>%
+  filter(grepl("^int_", scale_name)) %>%
+  filter(!grepl("identity_type|similarity_type|partner|outcome|response", scale_name)) %>%
+  mutate(scale_name = "interaction",
+         item = gsub("int_", "", item)) %>%
+  bind_rows(., identity) %>%
+  bind_rows(., outcome) %>%
+  bind_rows(., partner) %>%
+  bind_rows(., response) %>%
+  arrange(SID, day)
+```
+
+### hassels & uplifts
+```{r}
+hassels_uplifts <- data_clean %>%
+  filter(grepl("hassles|uplifts", scale_name)) %>%
+  mutate(item = dplyr::recode(
+    item,
+    "1" = "close_relations",
+    "2" = "workplace_relations",
+    "3" = "distant_relations",
+    "4" = "health_wellbeing",
+    "5" = "physical_appearance",
+    "6" = "work_education",
+    "7" = "financial_legal",
+    "8" = "news_politics",
+    "9" = "home_living",
+    "10" = "recreation_free_time",
+    "11" = "spiritual_religious",
+    "12" = "responsibilities_errands",
+    "13" = "transportation",
+    "14" = "other",
+    "other" = "other_text",
+    "15" = "none"
+    )) %>%
+  arrange(SID, day)
+```
+
+### well-being and sharing
+```{r}
+wellbeing = data_clean %>%
+  filter(grepl("wellbeing|compassion|disclosure", scale_name)) %>%
+  mutate(item = gsub("disclosures_", "", item),
+         scale_name = gsub("_self|_other", "", scale_name),
+         item = case_when(scale_name == "compassion" & item == "1" ~ "self",
+                          scale_name == "compassion" & item == "2" ~ "others",
+                          .default = item),
+         item = dplyr::recode(
+           item,
+           "1" = "social_connection", 
+           "2" = "purpose",
+           "3" = "self_clarity", 
+           "4" = "seen_understood", 
+           "5" = "goal_progress", 
+           "6" = "autonomous_motivation",
+           "7" = "controlled_motivation"
+          ),
+         scale_name = case_when(grepl("connection|purpose|clarity|seen", item) ~ "wellbeing",
+                                grepl("progress|motivation", item) ~ "goals_motivation",
+                                .default = scale_name)) %>%
+  arrange(SID, day)
+```
+
+### work
+```{r}
+work_identity = data_clean %>%
+  filter(grepl("work_identity_type", scale_name)) %>%
+  left_join(., identities) %>%
+  mutate(item = ifelse(!is.na(item_text), item_text, item)) %>%
+  select(-item_text)
+
+work = data_clean %>%
+  filter(grepl("work_attendance|work_experiences", scale_name)) %>%
+  mutate(
+    item = dplyr::recode(
+    item,
+    "1" = "belonging",
+    "9" = "value",
+    "10" = "reciprocity",
+    "11" = "fit"
+    ),
+    scale_name = ifelse(!scale_name == "work_attendance", "work_VRF", scale_name)
+  ) %>%
+  bind_rows(., work_identity) %>%
+  arrange(SID, day)
+```
+
+### merge daily items
+```{r}
+daily = emotions %>%
+  bind_rows(., alcohol) %>%
+  bind_rows(., daily_intervention) %>%
+  bind_rows(., interaction) %>%
+  bind_rows(., hassels_uplifts) %>%
+  bind_rows(., wellbeing) %>%
+  bind_rows(., work) %>%
+  arrange(SID, day)
+
+```
+
+## pre and post items {.tabset}
+
+### score data {.tabset}
+```{r}
+# get participant info for later merging
+participant_info = data_clean %>%
+  filter(!grepl("Daily", survey_name)) %>%
+  select(survey_name, day, date, SID, condition) %>% 
+  unique()
+
+# specify rubric paths
+scoring_rubrics = data.frame(file = dir(file.path("scoring_rubrics"), 
+                                        pattern = '.*.csv',
+                                        full.names = TRUE))
+# read in rubrics
+scoring_data = scorequaltrics::get_rubrics(scoring_rubrics,
+                                                type = 'scoring')
+```
+
+#### DVS
+Variables included at pre and post:
+
+* Scales: AUDIT, CES-D-10, DERS-SF, ERQ, FS, GAD-7, IRQ, PSOM, ULS-8, VRF
+
+```{r}
+# subset df
+data_prepped = data_clean %>%
+  filter(grepl("AUDIT|CES|DERS|ERQ|FS|GAD|IRQ|PSOM$|ULS|VRF$", scale_name)) %>%
+  mutate(item = ifelse(!scale_name == item, sprintf("%s_%s", scale_name, item), item),
+         value = as.numeric(value)) %>%
+  select(-survey_name) %>%
+  dplyr::rename("survey_name" = scale_name)
+
+# score
+scored_pre = scorequaltrics::score_questionnaire(filter(data_prepped, day == 0),
+                                                 scoring_data, SID = "SID", psych = FALSE)  %>%
+  mutate(day = 0)
+
+scored_post = scorequaltrics::score_questionnaire(filter(data_prepped, day == 13),
+                                                 scoring_data, SID = "SID", psych = FALSE) %>%
+  mutate(day = 13)
+
+dvs_scored = scored_pre %>%
+  bind_rows(scored_post) %>%
+  mutate(score = as.numeric(score),
+         score1 = case_when(scale_name == "PSOM" & n_missing == 18 ~ NaN, .default = score)) %>% #recode summed scores if missing all values
+  dplyr::rename("value" = score,
+                "item" = scored_scale) %>%
+  select(-survey_name) %>%
+  left_join(., participant_info) %>%
+  select(survey_name, day, date, condition, SID, scale_name, item, value, n_missing) %>%
+  arrange(SID, day)
+```
+
+#### individual differences
+
+Variables included at pre only:
+
+* Scales: DMQ-R-SF, SCC, SNI, VRF_demo, military_combat
+
+* Single items: PSOM_arrangement, PSOM_level, military_branch, military_experience, military_date, politics_ideology, readiness_change, therapy
+
+!! MISSING SCORING: SNI
+
+
+```{r}
+# subset df
+data_prepped_ind = data_clean %>%
+  filter(grepl("DMQ-R-SF|SCC|VRF_demo", scale_name)) %>%
+  mutate(item = sprintf("%s_%s", scale_name, item),
+         value = as.numeric(value)) %>%
+  select(-survey_name) %>%
+  dplyr::rename("survey_name" = scale_name)
+
+# score
+scored_pre_ind = scorequaltrics::score_questionnaire(filter(data_prepped_ind, day == 0),
+                                                 scoring_data, SID = "SID", psych = FALSE)  %>%
+  mutate(day = 0)
+
+scored_ind_diffs = scored_pre_ind %>%
+  #mutate(score = as.numeric(score)) %>%
+  dplyr::rename("value" = score,
+                "item" = scored_scale) %>%
+  select(-survey_name) %>%
+  left_join(., participant_info) %>%
+  select(survey_name, day, date, condition, SID, scale_name, item, value, n_missing)
+
+# score SNI
+sni = data_clean %>%
+  filter(grepl("SNI", scale_name)) 
+
+# score military combat
+military_combat = data_clean %>%
+  filter(grepl("combat", scale_name)) %>%
+  mutate(value = as.numeric(value),
+         value = case_when(item == 1 ~ (value - 1) * 2,
+                            item == 2 ~ (value - 1),
+                            item == 3 ~ (value - 1) * 2,
+                            item == 4 ~ (value - 1) * 2, .default = NA)) %>%
+  group_by(survey_name, day, date, condition, SID, scale_name, flag_condition_missing) %>%
+  summarize(value = sum(value))
+
+
+# recode military identity and branch
+military_identity = data_clean %>%
+  filter(grepl("military_identity", scale_name)) %>%
+  filter(value == "On") %>%
+  mutate(value = item,
+         item = "military_identity")
+
+military_branch = data_clean %>%
+  filter(grepl("military_branch", scale_name)) %>%
+  mutate(item = case_when(item == "1" ~ "Army",
+                          item == "2" ~ "Marines",
+                          item == "3" ~ "Navy",
+                          item == "4" ~ "Air Force",
+                          item == "5" ~ "Space Force",
+                          item == "6" ~ "Coast Guard",
+                          item == "7" ~ "Other", .default = NA)) %>%
+  filter(!is.na(value))
+
+# recode PSOM arrangement and level items
+PSOM_other = data_clean %>%
+  filter(grepl("PSOM_", scale_name)) %>%
+  mutate(item = case_when(scale_name == "PSOM_arrangement" & item == "1" ~ "In-person",
+                          scale_name == "PSOM_arrangement" & item == "2" ~ "Hybrid",
+                          scale_name == "PSOM_arrangement" & item == "3" ~ "Remote",
+                          scale_name == "PSOM_arrangement" & item == "4" ~ "Self-employed", .default = item),
+         value = case_when(scale_name == "PSOM_level" & value == "1" ~ "Entry-level",
+                           scale_name == "PSOM_level" & value == "2" ~ "Individual contributor",
+                           scale_name == "PSOM_level" & value == "3" ~ "Manager / supervisor",
+                           scale_name == "PSOM_level" & value == "4" ~ "Director or above",
+                           scale_name == "PSOM_level" & value == "5" ~ "Executive leadership", .default = value)) %>%
+  filter(!(scale_name == "PSOM_arrangement" & is.na(value)))
+
+# merge with single items
+ind_diffs_single = data_clean %>%
+  filter(grepl("military_date|military_experience|military_role|politics_ideology|readiness_change|therapy_", scale_name))
+
+ind_diffs_merged = scored_ind_diffs %>%
+  bind_rows(., ind_diffs_single) %>%
+  bind_rows(., sni) %>%
+  bind_rows(., military_identity) %>%
+  bind_rows(., military_branch) %>%
+  bind_rows(., PSOM_other) %>%
+  arrange(SID, scale_name, item)
+```
+
+### intervention-related items
+
+```{r}
+intervention = data_clean %>%
+  filter(grepl("alc_mind|alc_persp|dd_|gen_mind|gen_persp|study_peer", scale_name)) %>%
+  filter(!(condition == "control" & (grepl("mind|persp|study_peer", scale_name) | grepl("mind|persp", item)))) %>%
+  filter(!(condition == "gen_mindful" & (grepl("alc_mind|persp|study_peer", scale_name) | grepl("alc_mind|persp", item)))) %>%
+  filter(!(condition == "alc_mindful" & (grepl("gen_mind|persp|study_peer", scale_name) | grepl("gen_mind|persp", item)))) %>%
+  filter(!(condition == "gen_perspective" & (grepl("alc_persp|mind", scale_name) | grepl("alc_persp|mind", item)))) %>%
+  filter(!(condition == "alc_perspective" & (grepl("gen_persp|mind", scale_name) | grepl("gen_persp|mind", item)))) %>%
+  arrange(SID)
+```
+
+# data quality
+```{r}
+feedback = data_clean %>%
+  filter(grepl("feedback", scale_name)) %>%
+  arrange(SID, day)
+```
+
+# exclude participants
+```{r}
+# placeholder for additional exclusions
+exclusions = data.frame()
+
+# exclusions %>%
+#   group_by(reason) %>%
+#   dplyr::summarize(n = n())
+```
+
+Number of participants excluded = `r nrow(exclusions)`
+
+# demographic data
+```{r}
+ses_subjective = demo_clean %>%
+  filter(scale_name == "ses_subjective" & value == "On") %>%
+  select(-value) %>%
+  dplyr::rename("value" = item) %>%
+  mutate(item = "ses_subjective")
+
+ethnicity_self = demo_clean %>%
+  filter(scale_name == "race_self" & !is.na(value)) %>%
+  mutate(scale_name = "race_ethnicity_self",
+         item = "race_ethnicity_self")
+
+ethnicity = demo_clean %>%
+  filter(scale_name == "race" & !is.na(value)) %>%
+  mutate(item = dplyr::recode(item, "1" = "White",
+                              "2" = "Black or African American",
+                              "3" = "East Asian",
+                              "4" = "American Indian or Alaskan Native",
+                              "5" = "Native Hawaiian or Other Pacific Islander",
+                              "6" = "South Asian",
+                              "7" = "Middle Eastern or North African ",
+                              "8" = "Prefer not to say",
+                              "9" = "Racial/ethnic identity not listed"), item) %>%
+  select(-value) %>%
+  rename("item" = scale_name,
+         "value" = item) %>%
+  mutate(scale_name = "race_ethnicity",
+         item = "race_ethnicity")
+
+demo = demo_clean %>%
+  filter(grepl("^age$|degree|household|hispanic_latinx|state|zip", item)) %>%
+  mutate(value = ifelse(grepl("hispanic_latinx", item), dplyr::recode(value, "0" = "No", 
+                                                                      "1" = "Yes",
+                                                                      "2" = "Prefer not to say"), value),
+         value = ifelse(grepl("degree", item), dplyr::recode(value, "1" = "No formal education",
+                                                             "2" = "Did not complete high school",
+                                                             "3" = "High school graduate (diploma)",
+                                                             "4" = "High school graduate (GED)",
+                                                             "5" = "Some college (1-4 years, no degree)",
+                                                             "6" = "Associate's degree (including occupational or academic degrees)",
+                                                             "7" = "Bachelor's degree (BA, BS, etc)",
+                                                             "8" = "Master's degree (MA, MS, MENG, MSW, etc)",
+                                                             "9" = "Professional school degree (MD, DDC, JD, etc)",
+                                                             "10" = "Doctorate degree (PhD, EdD, etc)"), value),
+         value = ifelse(grepl("household", item), dplyr::recode(value, "1" = "Less than $5,000",
+                                                                "2" = "$5,000 through $11,999",
+                                                                "3" = "$12,000 through $15,999",
+                                                                "4" = "$16,000 through $24,999",
+                                                                "5" = "$25,000 through $34,999",
+                                                                "6" = "$35,000 through $49,999",
+                                                                "7" = "$50,000 through $74,999",
+                                                                "8" = "$75,000 through $99,999",
+                                                                "9" = "$100,000 through $149,999",
+                                                                "10" = "$150,000 and greater",
+                                                                "11" = "Prefer not to say",
+                                                                "12" = "NA"), value)) %>%
+  bind_rows(., ses_subjective, ethnicity, ethnicity_self) %>%
+  arrange(SID) %>%
+  select(SID, condition, scale_name, item, value)
+```
+
+# write csvs
+```{r}
+write.csv(filter(daily, !SID %in% exclusions$SID), "../../Data/Prepped/daily.csv", row.names = FALSE)
+write.csv(filter(dvs_scored, !SID %in% exclusions$SID), "../../Data/Prepped/dvs.csv", row.names = FALSE)
+write.csv(filter(ind_diffs_merged, !SID %in% exclusions$SID), "../../Data/Prepped/individual_diffs.csv", row.names = FALSE)
+write.csv(filter(intervention, !SID %in% exclusions$SID), "../../Data/Prepped/intervention.csv", row.names = FALSE)
+write.csv(filter(feedback, !SID %in% exclusions$SID), "../../Data/Prepped/feedback.csv", row.names = FALSE)
+write.csv(filter(demo, !SID %in% exclusions$SID), "../../Data/Prepped/demographics.csv", row.names = FALSE)
+write.csv(exclusions, "../../Data/Prepped/exclusions.csv", row.names = FALSE)
+```

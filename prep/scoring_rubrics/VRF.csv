@@ -1,0 +1,6 @@
+scale name,column name,reverse,min,max,transform,mean,value,reciprocity,fit,race_ethnicity,sex
+VRF,VRF_1,0,0,100,0,mean,1,,,,
+VRF,VRF_2,0,0,100,0,mean,,1,,,
+VRF,VRF_3,0,0,100,0,mean,,,1,,
+VRF_demo,VRF_demo_1,0,0,100,0,,,,,1,
+VRF_demo,VRF_demo_2,0,0,100,0,,,,,,1

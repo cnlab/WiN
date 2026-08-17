@@ -1,0 +1,13 @@
+scale name,column name,reverse,min,max,transform,mean,sum
+SCC,SCC_1,1,1,5,0,mean,sum
+SCC,SCC_2,0,1,5,0,mean,sum
+SCC,SCC_3,1,1,5,0,mean,sum
+SCC,SCC_4,1,1,5,0,mean,sum
+SCC,SCC_5,1,1,5,0,mean,sum
+SCC,SCC_6,1,1,5,0,mean,sum
+SCC,SCC_7,0,1,5,0,mean,sum
+SCC,SCC_8,1,1,5,0,mean,sum
+SCC,SCC_9,0,1,5,0,mean,sum
+SCC,SCC_10,1,1,5,0,mean,sum
+SCC,SCC_11,0,1,5,0,mean,sum
+SCC,SCC_12,0,1,5,0,mean,sum

@@ -1,0 +1,13 @@
+scale name,column name,reverse,min,max,transform,social,coping,enhancement,conformity
+DMQ-R-SF,DMQ-R-SF_1,0,1,5,0,,,mean,
+DMQ-R-SF,DMQ-R-SF_2,0,1,5,0,,,mean,
+DMQ-R-SF,DMQ-R-SF_3,0,1,5,0,,,mean,
+DMQ-R-SF,DMQ-R-SF_4,0,1,5,0,mean,,,
+DMQ-R-SF,DMQ-R-SF_5,0,1,5,0,mean,,,
+DMQ-R-SF,DMQ-R-SF_6,0,1,5,0,mean,,,
+DMQ-R-SF,DMQ-R-SF_7,0,1,5,0,,,,mean
+DMQ-R-SF,DMQ-R-SF_8,0,1,5,0,,,,mean
+DMQ-R-SF,DMQ-R-SF_9,0,1,5,0,,,,mean
+DMQ-R-SF,DMQ-R-SF_10,0,1,5,0,,mean,,
+DMQ-R-SF,DMQ-R-SF_11,0,1,5,0,,mean,,
+DMQ-R-SF,DMQ-R-SF_12,0,1,5,0,,mean,,

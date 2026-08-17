@@ -1,0 +1,280 @@
+---
+title: "WiN: data cleaning post"
+author: "Dani Cosme & Taurean Butler"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = FALSE)
+options(scipen=999)
+```
+
+# load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, knitr, DT, devtools)
+
+if (!require(scorequaltrics)) {
+  devtools::install_github('dcosme/qualtrics', ref = "dev/enhance")
+}
+```
+
+# define variables and paths
+
+To pull data from Qualtrics, you need a credentials file with an API token associated with your account. To create the file, follow these steps.
+
+1. Generate an API token for Qualtrics. Follow the steps outlined [here](https://www.qualtrics.com/support/integrations/api-integration/overview/).
+
+2. Save a Qualtrics credentials text file with the following format. In this example, the file is being saved as `~/credentials.yaml.PENN`. The `baseurl` is the URL for your institution on Qualtrics. Use `upenn.co1.qualtrics.com` for Penn Qualtrics.
+
+```
+token: oILNW6...[your qualtrics API token]
+baseurl: upenn.co1.qualtrics.com
+```
+
+`cred_file_location` = path to your Qualtrics credential file. 
+
+`survey_name_filter` = regular expression to filter the available surveys
+
+```{r}
+survey_name_filter = "WiN End Survey - FINAL"
+keep_columns = '(ResponseId|Finished|Progress|PROLIFIC_PID|ID|failed|condition|activeweek|StartDate)'
+cred_file_location = "~/qualtrics_credentials.yaml"
+#cred_file_location = "~/Documents/qualtrics_config.yaml"
+ignore_items = "ResponseId|IPAddress|RecipientFirstName|RecipientLastName|RecipientEmail|ExternalReference|LocationLatitude|LocationLongitude"
+```
+
+# fetch qualtrics data
+The Qualtrics API is pretty finicky. If you get the following error, just rerun the `get_survey_data` command until it works:
+
+```
+Error in qualtrics_response_codes(f, raw = TRUE) : 
+  Qualtrics API complains that the requested resource cannot be found (404 error).
+Please check if you are using the correct survey ID.
+```
+```{r}
+# load data file if it exists, or pull fresh from qualtrics using the API
+if (!file.exists("../../Data/Raw/post_raw.RDS")) {
+  # load credential file
+  credentials = scorequaltrics::creds_from_file(cred_file_location)
+  
+  # filter
+  surveysAvail = scorequaltrics::get_surveys()
+  surveysFiltered = filter(surveysAvail, grepl(survey_name_filter, name))
+  knitr::kable(arrange(select(surveysFiltered, name), name))
+  
+  # fetch data
+  surveys_long = scorequaltrics::get_survey_data(surveysFiltered,
+                                                 credentials, 
+                                                 pid_col = keep_columns) %>%
+                 filter(!grepl(ignore_items, item)) %>% #filter out identifiable data
+    select(survey_name, condition, activeweek, StartDate, ResponseId, PROLIFIC_PID, Finished, Progress, item, value)
+
+  saveRDS(surveys_long, "../../Data/Raw/post_raw.RDS")
+} else {
+  surveys_long = readRDS("../../Data/Raw/post_raw.RDS")
+}
+
+```
+
+
+# tidy
+
+TO FIX
+
+!! includes timers that include "_t_" rather than starting with "timing" --> rename in qualtrics after data is collected
+
+```{r}
+# load id key
+id_key = read.csv("../../Data/Cleaned/pre_key.csv")
+
+# filter out non-participant responses and recode IDs
+surveys_included = surveys_long %>%
+  filter(!is.na(PROLIFIC_PID)) %>% #remove test responses
+  filter(!grepl("5efe5bdf6b4d873597a3c3e6", PROLIFIC_PID)) %>% #remove test responses
+  filter(nchar(PROLIFIC_PID) == 24) %>% # remove invalid IDs from test responses
+  filter(Progress > 90) %>% # remove incomplete responses 
+  filter(!grepl("_DO_", item)) %>% # remove order items
+  filter(!grepl("Q_Recaptcha|Q_Duplicate|^Status$|DistributionChannel|EndDate|RecordedDate|UserLanguage|Last Seen", item)) %>% #remove qualtrics variables we wont' use
+  select(-Finished, -Progress) # update if we include people who completed less than 100%
+
+# tidy scales with multiple items
+surveys_subitems = surveys_included %>% 
+  filter(grepl("_[0-9]+$", item)) %>%
+  mutate(# slider numbers
+         item = ifelse(grepl("alcohol_craving_1|alcohol_thoughts_1", item), gsub("_1", "", item), item)) %>% 
+  extract(item, c("scale_name", "number"), "(.*)_([0-9]{1,2}$)", remove = FALSE) %>% # separate scale names and item numbers
+  mutate(scale_name = ifelse(is.na(scale_name), item, scale_name),
+         item = ifelse(!is.na(number), number, item)) %>%
+  select(-number)
+
+# timers
+surveys_timer = surveys_included %>%
+  filter(grepl("timing_|_t_", item)) %>% # !! includes timers that include "_t_" rather than starting with "timing" --> rename in qualtrics after data is collected
+  filter(!grepl("_timing_", item)) %>%
+  extract(item, c("item"), "timing_(.*)", remove = FALSE) %>%
+  dplyr::mutate(scale_name = "timing")
+
+# tidy remaining items and merge
+surveys_tidy <- surveys_included %>% 
+  dplyr::filter(!grepl("_[0-9]+$", item)) %>%
+  dplyr::filter(!grepl("^timing_|_timing_|_t_", item)) %>% # !! includes timers that include "_t_" rather than starting with "timing" --> rename in qualtrics after data is collected
+  tidyr::extract(
+    item,
+    c("scale_name", "sub_item"),
+    "^(SNI_work|ux_feedback)_(.*)$",
+    remove = FALSE
+  ) %>%
+  dplyr::mutate(
+    scale_name = ifelse(is.na(scale_name), item, scale_name),
+    item = ifelse(!is.na(sub_item), sub_item, item),
+    item = gsub("8_", "", item), # remove extraneous number from open-ended item
+    scale_name = gsub("8_", "", scale_name), # remove extraneous number from open-ended item
+    item = gsub(".*_TEXT", "other", item), # recode open response items
+    scale_name = gsub("_TEXT", "", scale_name), # recode open response items
+    value = ifelse(value == "", NA, value),
+  ) %>%
+  dplyr::select(-sub_item) %>%
+  dplyr::bind_rows(surveys_subitems) %>%
+  dplyr::bind_rows(surveys_timer)
+
+# check for duplicates and fix as needed
+sid_duplicates = surveys_included %>%
+  spread(item, value) %>%
+  select(survey_name, ResponseId, StartDate, PROLIFIC_PID, condition) %>%
+  unique() %>%
+  group_by(PROLIFIC_PID) %>%
+  dplyr::mutate(n = n()) %>%
+  filter(n > 1) %>%
+  arrange(PROLIFIC_PID, StartDate)
+
+# create new SIDs
+duplicate_ids = sid_duplicates %>%
+  dplyr::mutate(second_survey = ifelse(!row_number() == 1, "yes", "no")) %>%
+  filter(second_survey == "yes")
+
+# merge
+surveys_id = surveys_tidy %>%
+  filter(!ResponseId %in% duplicate_ids$ResponseId) %>% # remove second of duplicate responses if applicable
+  left_join(., id_key) %>%
+  arrange(SID, scale_name, item) %>%
+  select(survey_name, StartDate, SID, PROLIFIC_PID, scale_name, condition,  item, value) #removed "failed_attention" and  variables from original cleaning pre script because do not exist in surveys_included
+
+# check id merging
+# these two people are missing condition info and activeweek in qualtrics and therefore the data didn't merge correctly
+missing_ids = surveys_id %>% filter(is.na(SID)) %>%
+  left_join(., id_key, by = c("PROLIFIC_PID")) %>% 
+  select(-contains(".x")) %>%
+  rename("SID" = SID.y,
+         "condition" = condition.y)
+
+# fix missing condition info and ids
+surveys  = surveys_id %>%
+  filter(!PROLIFIC_PID %in% missing_ids$PROLIFIC_PID) %>%
+  bind_rows(missing_ids) %>%
+  arrange(SID, scale_name, item) %>%
+  mutate(day = 13) %>% # add day variable
+  select(survey_name, StartDate, condition, day, SID, scale_name, item, value)
+
+```
+
+# summarize survey ns {.tabset}
+## number of scale response
+```{r}
+surveys %>%
+  filter(!is.na(value)) %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time", scale_name)) %>%
+  group_by(scale_name) %>%
+  select(SID, scale_name) %>%
+  unique() %>%
+  dplyr::summarize(n = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+## number of scale responses per person
+```{r}
+surveys %>%
+  filter(!is.na(value)) %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time", scale_name)) %>%
+  group_by(SID, scale_name) %>%
+  summarize(n_responses = n()) %>%
+  group_by(scale_name, n_responses) %>%
+  summarize(n_people = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+## number of missing responses
+```{r}
+surveys %>%
+  filter(is.na(value)) %>%
+  filter(!grepl("timing|Duration|User|Distribution|Date|Status|Task|perPage|time|pageNo", scale_name)) %>%
+  group_by(SID, scale_name, item) %>%
+  group_by(scale_name, item) %>%
+  summarize(n_people_missing = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+## number of participants {.tabset}
+### all 
+```{r}
+surveys %>%
+  select(SID) %>%
+  unique() %>%
+  dplyr::summarize(n = n())
+```
+
+### by condition 
+```{r}
+surveys %>%
+  select(SID, condition) %>%
+  unique() %>%
+  group_by(condition) %>%
+  dplyr::summarize(n = n())
+```
+
+# check scale ranges
+```{r}
+surveys %>%
+  dplyr::filter(
+    !grepl(
+      "timing|Duration|User|Distribution|Date|Status|Task|perPage|time|zipcode|military_date|activeweek|Recorded|EndDate|StartDate|consent|worktimeArray",
+      scale_name
+    )
+  ) %>%
+  dplyr::mutate(
+    value_num = suppressWarnings(as.numeric(value))
+  ) %>%
+  dplyr::filter(!is.na(value_num)) %>%
+  dplyr::group_by(scale_name) %>%
+  dplyr::summarise(
+    min = round(min(value_num), 2),
+    max = round(max(value_num), 2),
+    mean = round(mean(value_num), 2),
+    var = round(var(value_num), 2),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(scale_name) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+# write csvs
+```{r}
+write.csv(surveys, "../../data/cleaned/post_clean_long.csv", row.names = FALSE)
+```
+

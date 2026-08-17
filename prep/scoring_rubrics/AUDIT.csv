@@ -1,0 +1,11 @@
+﻿scale name,column name,reverse,min,max,transform,sum
+AUDIT,AUDIT_1,0,0,4,0,sum
+AUDIT,AUDIT_2,0,0,4,0,sum
+AUDIT,AUDIT_3,0,0,4,0,sum
+AUDIT,AUDIT_4,0,0,4,0,sum
+AUDIT,AUDIT_5,0,0,4,0,sum
+AUDIT,AUDIT_6,0,0,4,0,sum
+AUDIT,AUDIT_7,0,0,4,0,sum
+AUDIT,AUDIT_8,0,0,4,0,sum
+AUDIT,AUDIT_9,0,0,4,0,sum
+AUDIT,AUDIT_10,0,0,4,0,sum

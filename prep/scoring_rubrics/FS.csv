@@ -1,0 +1,9 @@
+scale name,column name,reverse,min,max,transform,mean,sum
+FS,FS_1,0,1,7,0,mean,sum
+FS,FS_2,0,1,7,0,mean,sum
+FS,FS_3,0,1,7,0,mean,sum
+FS,FS_4,0,1,7,0,mean,sum
+FS,FS_5,0,1,7,0,mean,sum
+FS,FS_6,0,1,7,0,mean,sum
+FS,FS_7,0,1,7,0,mean,sum
+FS,FS_8,0,1,7,0,mean,sum

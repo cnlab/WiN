@@ -1,0 +1,11 @@
+scale name,column name,reverse,min,max,transform,mean,reappraisal,suppression
+ERQ,ERQ_1,0,1,7,0,mean,mean,
+ERQ,ERQ_2,0,1,7,0,mean,,mean
+ERQ,ERQ_3,0,1,7,0,mean,mean,
+ERQ,ERQ_4,0,1,7,0,mean,,mean
+ERQ,ERQ_5,0,1,7,0,mean,mean,
+ERQ,ERQ_6,0,1,7,0,mean,,mean
+ERQ,ERQ_7,0,1,7,0,mean,mean,
+ERQ,ERQ_8,0,1,7,0,mean,mean,
+ERQ,ERQ_9,0,1,7,0,mean,,mean
+ERQ,ERQ_10,0,1,7,0,mean,mean,

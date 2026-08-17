@@ -1,0 +1,19 @@
+scale name,column name,reverse,min,max,transform,mean,sum,nonacceptance,goals,impulse,awareness,strategies,clarity
+DERS,DERS-SF_1,0,1,5,0,mean,sum,mean,,,,,
+DERS,DERS-SF_2,0,1,5,0,mean,sum,mean,,,,,
+DERS,DERS-SF_3,0,1,5,0,mean,sum,mean,,,,,
+DERS,DERS-SF_4,0,1,5,0,mean,sum,,mean,,,,
+DERS,DERS-SF_5,0,1,5,0,mean,sum,,mean,,,,
+DERS,DERS-SF_6,0,1,5,0,mean,sum,,mean,,,,
+DERS,DERS-SF_7,0,1,5,0,mean,sum,,,mean,,,
+DERS,DERS-SF_8,0,1,5,0,mean,sum,,,mean,,,
+DERS,DERS-SF_9,0,1,5,0,mean,sum,,,mean,,,
+DERS,DERS-SF_10,0,1,5,0,mean,sum,,,,mean,,
+DERS,DERS-SF_11,0,1,5,0,mean,sum,,,,mean,,
+DERS,DERS-SF_12,0,1,5,0,mean,sum,,,,mean,,
+DERS,DERS-SF_13,0,1,5,0,mean,sum,,,,,mean,
+DERS,DERS-SF_14,0,1,5,0,mean,sum,,,,,mean,
+DERS,DERS-SF_15,0,1,5,0,mean,sum,,,,,mean,
+DERS,DERS-SF_16,0,1,5,0,mean,sum,,,,,,mean
+DERS,DERS-SF_17,0,1,5,0,mean,sum,,,,,,mean
+DERS,DERS-SF_18,0,1,5,0,mean,sum,,,,,,mean
