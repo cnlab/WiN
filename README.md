@@ -1,2 +1,2 @@
 # WiN
-General code for WiN analyses
+General code for data cleaning, prep, and analysis of the WiN Study.
